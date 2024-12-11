@@ -824,6 +824,11 @@ void DefaultConfiguration(diybms_eeprom_settings *_myset)
     _myset->rulevalue[Rule::Timer1] = 60 * 8;  // 8am
     _myset->rulevalue[Rule::Timer2] = 60 * 17; // 5pm
 
+    // External SOC Deviation 
+    _myset->rulevalue[Rule::ReconnectSOC] = 5;
+    // External Voltage Deviation
+    _myset->rulevalue[Rule::ReconnectVoltage] = 250;
+
     // Temperature of the actual module/PCB attached to a cell (internal temperature)
     _myset->rulevalue[Rule::ModuleOverTemperatureInternal] = 75;
     _myset->rulevalue[Rule::ModuleUnderTemperatureInternal] = 5;

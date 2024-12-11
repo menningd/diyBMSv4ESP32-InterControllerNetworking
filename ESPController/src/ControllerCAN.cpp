@@ -1,6 +1,6 @@
 /*
 
-This code formats local controller data into "industry standard" CAN messages for the purpose of reporting to various inverter manufacturers. It also establishes Intra-Controller communication of these messages to be aggregated and reported to an inverter
+This code formats local controller data into "industry standard" CAN messages for the purpose of reporting to various inverter manufacturers. It also establishes Inter-Controller communication of these messages to be aggregated and reported to an inverter
 
 Note!! Data will be serialized for transmission in little endian order. It will be received by other controllers and stored as such in a array of single byte type. So, those parameters
 need cast back to the original data type/size before any aggregation math.
@@ -16,7 +16,7 @@ const uint32_t ControllerCAN::id[MAX_CAN_PARAMETERS][MAX_NUM_CONTROLLERS] = {
     /*                                                                                                                                                                                     __INDUSTRY STANDARD ID'S__    */
     /*  0       DVCC*/                    {0x258 /*600*/   ,0x259 /*601*/   ,0x25a /*602*/   ,0x25b /*603*/   ,0x25c /*604*/   ,0x25d /*605*/   ,0x25e /*606*/   ,0x25f /*607*/   },         /*__0x351 (849)__*/
     /*  1       ALARMS*/                  {0x26c /*620*/   ,0x26d /*621*/   ,0x26e /*622*/   ,0x26f /*623*/   ,0x270 /*624*/   ,0x271 /*625*/   ,0x272 /*626*/   ,0x273 /*627*/   },         /*__0x35a (858)__*/
-    /*  2       BIT MSGS*/                {0x280 /*640*/   ,0x281 /*641*/   ,0x282 /*642*/   ,0x283 /*643*/   ,0x284 /*644*/   ,0x285 /*645*/   ,0x286 /*646*/   ,0x287 /*647*/   },
+    /*  2       DIYBMS MSGS*/             {0x280 /*640*/   ,0x281 /*641*/   ,0x282 /*642*/   ,0x283 /*643*/   ,0x284 /*644*/   ,0x285 /*645*/   ,0x286 /*646*/   ,0x287 /*647*/   },
     /*  3       #MODULES OK*/             {0x294 /*660*/   ,0x295 /*661*/   ,0x296 /*662*/   ,0x297 /*663*/   ,0x298 /*664*/   ,0x299 /*665*/   ,0x29a /*666*/   ,0x29b /*667*/   },         /*__0X372 (882)__*/
     /*  4       SOC/SOH*/                 {0x3e8 /*1000*/  ,0x3e9 /*1001*/  ,0x3ea /*1002*/  ,0x3eb /*1003*/  ,0x3ec /*1004*/  ,0x3ed /*1005*/  ,0x3ee /*1006*/  ,0x3ef /*1007*/  },         /*__0x355 (853)__*/
     /*  5       CAP & FIRMWARE*/          {0x3fc /*1020*/  ,0x3fd /*1021*/  ,0x3fe /*1022*/  ,0x3ff /*1023*/  ,0x400 /*1004*/  ,0x401 /*1005*/  ,0x402 /*1006*/  ,0x403 /*1007*/  },         /*__0x35f (863)__*/
@@ -30,63 +30,48 @@ const uint32_t ControllerCAN::id[MAX_CAN_PARAMETERS][MAX_NUM_CONTROLLERS] = {
 
 };
 
-TimerHandle_t error_debounce_timer;
 
-void CAN_Networking_disconnect(TimerHandle_t error_debounce_timer)
-{
-          /* Force Disable the CANBUS if there is an internal error for a set period of time (see applicable timer) and there are networked controllers. 
-          This is to prevent a controller that has disconnected itself from auto-reconnecting (there's probably be a better way of doing this with some "reconnection rules"). 
-          User must manually re-enable canbus protocol*/
-          ESP_LOGD(TAG,"disconnect call back function called....");
-        if (mysettings.controllerNet != 1 && _controller_state == ControllerState::Running)
-        {
-          mysettings.canbusprotocol = CanBusProtocolEmulation::CANBUS_DISABLED;
-          ESP_LOGD(TAG,"disconnected canbus");
-        }
-}
 //return whether a controller has a valid heartbeat by checking the bitmssgs timestamp array
 bool ControllerCAN::controller_heartbeat(uint8_t controllerAddress)
 {
- if ((esp_timer_get_time() - BITMSGS_TIMESTAMP[controllerAddress]) < (HEARTBEAT_PERIOD*1000))
+ if ((esp_timer_get_time() - DIYBMS_TIMESTAMP[controllerAddress]) < (HEARTBEAT_PERIOD*1000))
   {
     return true;
   }
   return false;
 }
 
+// clear values
 void ControllerCAN::clearvalues()
 {
    online_controller_count = 1; 
    master = 0;
-      // Zero Array (traversing out of normal order ( data[q][r][s] ) to include BITMSGS_TIMESTAMP array)
-    for (uint8_t r = 0; r < MAX_NUM_CONTROLLERS; r++)
-    {
-      BITMSGS_TIMESTAMP[r] = 0;
-      for (uint8_t q = 0; q < MAX_CAN_PARAMETERS; q++)
-      {
-        for (uint8_t s = 0; s < TWAI_FRAME_MAX_DLC; s++)
-        {
-          data[q][r][s]= 0;
-        }
-      }
-        
-    }
+      // Zero Data Array 
+    memset(&data, 0, sizeof(data));
+    memset(&DIYBMS_TIMESTAMP, 0, sizeof(DIYBMS_TIMESTAMP));
 }
 
-// check controller network status      0=OK  1=controller offline  2=controller network configuration error
+// Checks controller network status and returns: 0=OK  1=controller offline  2=controller network configuration error
+// Updates online controller count
 uint8_t ControllerCAN::controllerNetwork_status()
 {
-  uint8_t returnvalue = 0;
-  uint8_t controller_count = 0; 
+  uint8_t returnvalue = OK;
+  uint8_t communicating_controllers = 0;
+  uint8_t isolated_controllers = 0;
   uint8_t addressbitmask = 0;
   uint8_t high_availability = mysettings.highAvailable;
   uint8_t networked_controllers = 0;
 
   for (uint8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
   {
-      if (controller_heartbeat(i) == true) // only poll online controllers
-      {
-        controller_count++;
+      if (controller_heartbeat(i)) // only poll online controllers 
+        {communicating_controllers++;
+
+        // count how many have Isolated themselves (DIYBMS_MSGS frame, byte 2)
+        if (data[2][i][2] == 1)
+        {
+          isolated_controllers++;
+        }
 
         // checksum for controller address overlap
         addressbitmask &= data[2][i][0]; // this should should never be elevated above 0 or there is an overlap
@@ -115,28 +100,24 @@ uint8_t ControllerCAN::controllerNetwork_status()
     returnvalue = 2;
   }
 
+
+
    // checksum for connected controllers 
-  if (controller_count > mysettings.controllerNet)
+  if (communicating_controllers > mysettings.controllerNet)
   {
-      ESP_LOGE(TAG, "Controller network count discrepancy");
-      returnvalue = 0; // debug change this back to 2
-      online_controller_count = controller_count;
+      ESP_LOGE(TAG, "Controller network count discrepancy. #Online Controllers=%d/%d (more than expected total).",online_controller_count,mysettings.controllerNet);
+      returnvalue = 2; 
+      online_controller_count = communicating_controllers;
   }
-  else if (controller_count == 0) // for debug only, this should never happen
+  else if (communicating_controllers < mysettings.controllerNet && returnvalue !=2)  // controller offline (but don't overwrite a higher level alert)
   {
-      ESP_LOGE(TAG, "!ERROR! Online_controller_count = 0");
-      returnvalue = 0; // debug change this back to 2
-      online_controller_count = 1; //force it to one to avoid divide by zero later
-  }
-  else if (controller_count < mysettings.controllerNet && returnvalue !=2)  // don't change a higher level alert to a lower level
-  {
-      returnvalue = 0; // debug change this back to 1
-      online_controller_count = controller_count;
+      returnvalue = 1; 
+      online_controller_count = communicating_controllers - isolated_controllers; 
       ESP_LOGE(TAG, "A controller is offline. #Online Controllers=%d/%d",online_controller_count,mysettings.controllerNet);
   }
   else  //normal operation
   {
-      online_controller_count = controller_count;
+      online_controller_count = communicating_controllers - isolated_controllers;
   }
 
   return returnvalue;
@@ -176,6 +157,37 @@ void ControllerCAN::SetBankAndModuleText(char *buffer, uint8_t cellid)       //f
 
 }
 
+// These reconnect functions check if Reconnection is permitted after a pack has been isolated
+bool SOC_Permit_Reconnect()
+{
+  uint16_t local_SOC = *(uint16_t*)&data[4][mysettings.controllerID][0];
+
+  if (abs(Aggregate_SOC - local_SOC) < Rules::hysteresisvalue[Rule::ReconnectSOC])
+  {
+    return true;
+  }
+  return false;
+}
+bool Voltage_Permit_Reconnect()
+{
+  int16_t local_Voltage = *(int16_t*)&data[6][mysettings.controllerID][0];
+
+  if (abs(Aggregate_Voltage - local_Voltage) < Rules::hysteresisvalue[Rule::ReconnectVoltage])
+  {
+    return true;
+  }
+  return false;
+}
+
+
+
+
+
+
+
+////////////////////////////////////////////
+// Controller-to-Controller CAN Messages////
+////////////////////////////////////////////
 void ControllerCAN::c2c_DVCC()    //DVCC settings
 {
     CANframe candata;
@@ -197,7 +209,7 @@ void ControllerCAN::c2c_DVCC()    //DVCC settings
       int16_t default_charge_current_limit;   
       int16_t default_discharge_current_limit; 
 
-      if (mysettings.canbusprotocol == CanBusProtocolEmulation::CANBUS_VICTRON)
+      if (mysettings.protocol == ProtocolEmulation::CANBUS_VICTRON)
       {
         // Don't use zero for voltage - this indicates to Victron an over voltage situation, and Victron gear attempts to dump
         // the whole battery contents!  (feedback from end users)
@@ -205,7 +217,7 @@ void ControllerCAN::c2c_DVCC()    //DVCC settings
         default_charge_current_limit = 0;    
         default_discharge_current_limit = 0; 
       }
-      else if ((mysettings.canbusprotocol == CanBusProtocolEmulation::CANBUS_PYLONTECH) && (mysettings.canbusinverter == CanBusInverter::INVERTER_DEYE))
+      else if ((mysettings.protocol == ProtocolEmulation::CANBUS_PYLONTECH) && (mysettings.canbusinverter == CanBusInverter::INVERTER_DEYE))
       {
         // FOR DEYE INVERTERS APPLY DIFFERENT LOGIC TO PREVENT "W31" ERRORS
         // ISSUE #216
@@ -213,7 +225,7 @@ void ControllerCAN::c2c_DVCC()    //DVCC settings
         default_charge_current_limit = 0;
         default_discharge_current_limit = 0;
       }
-      else if ((mysettings.canbusprotocol == CanBusProtocolEmulation::CANBUS_PYLONTECH) && (mysettings.canbusinverter == CanBusInverter::INVERTER_GENERIC))
+      else if ((mysettings.protocol == ProtocolEmulation::CANBUS_PYLONTECH) && (mysettings.canbusinverter == CanBusInverter::INVERTER_GENERIC))
       { // If we pass ZERO's to SOFAR inverter it appears to ignore them
         // so send 0.1V and 0.1Amps instead to indicate "stop"
         default_charge_voltage = 1;         // 0.1V
@@ -437,7 +449,6 @@ void ControllerCAN::c2c_DIYBMS_MSGS()      // diyBMS messaging/alarms
 // byte 1 - Is Charge/Discharge Allowed?
   candata.data[1] = 0;
   
-
     if (rules.IsChargeAllowed(&mysettings))
     {
         candata.data[1] = candata.data[1] | B10000000;
@@ -448,11 +459,8 @@ void ControllerCAN::c2c_DIYBMS_MSGS()      // diyBMS messaging/alarms
         candata.data[1] = candata.data[1] | B01000000;
     }
 
-
-
-// byte 2 - are NetworkedControllerRules active?
-  candata.data[2] = rules.NetworkedControllerRules(&mysettings, &error_debounce_timer);
-
+// byte 2 - Is controller Isolated?
+  candata.data[2] = ControllerIsolated;
 // byte 3 - HighAvailability setting
   candata.data[3] = mysettings.highAvailable;
 // byte 4 - # Networked Controllers
@@ -531,8 +539,28 @@ void ControllerCAN::c2c_SOC()      // SOC
 
     if (mysettings.controllerNet != 1)
     {
-        // send to tx routine , block 50ms 
-        
+
+        // We must do some aggregation here even if the controller is Isolated so that we can establish when a reconnection is permitted
+        //SOC (weighted average based on nominal Ah of each controller)
+        uint16_t Total_Ah = 0;
+        uint32_t Total_Weighted_Ah = 0;
+        uint16_t Weighted_SOC = 0;
+
+        for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
+        {
+            if (controller_heartbeat(i) && (data[2][i][2] == 1)) // only use values from online controllers that have not Isolated themselves
+            {
+            Total_Ah = Total_Ah + *(uint16_t*)&data[5][i][4];
+            Total_Weighted_Ah = Total_Weighted_Ah + (*(uint16_t*)&data[4][i][0]) * (*(uint16_t*)&data[5][i][4]);  //SOC x Online capacity
+            }
+        }
+        if (Total_Ah)  //avoid divide by zero (we won't have useable values during CAN initialization)
+        {          
+            // store this value for use in rules
+            AggregateSOC = Total_Weighted_Ah / Total_Ah;
+        }    
+
+        // send to tx routine , block 50ms       
         //ESP_LOGI(TAG,"SOC sent over ControllerCAN = %d",stateofchargevalue); //for debug purposes only
         if (xQueueSendToBack(CANtx_q_handle, &candata, pdMS_TO_TICKS(50)) != pdPASS)
         {
@@ -637,6 +665,20 @@ void ControllerCAN::c2c_VIT()   //Battery voltage, current, and temperature
      // send to tx routine , block 50ms 
       if (mysettings.controllerNet != 1)
       {
+
+        // We must do some aggregation here even if the controller is Isolated so that we can establish when a reconnection is permitted
+        voltage = 0;
+
+        for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
+        {
+            if (controller_heartbeat(i) && (data[2][i][2] == 1))  // only use values from online controllers that have not Isolated themselves (DIYBMS_MSGS frame, byte 2)
+            {
+                voltage = voltage + *(int16_t*)&data[6][i][0];
+            }
+        }
+        AggregateVoltage = voltage / online_controller_count;
+
+
           if (xQueueSendToBack(CANtx_q_handle, &candata, pdMS_TO_TICKS(50)) != pdPASS)
         {
             ESP_LOGE(TAG, "CAN Q Full");

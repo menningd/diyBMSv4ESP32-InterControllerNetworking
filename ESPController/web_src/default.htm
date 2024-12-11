@@ -701,6 +701,12 @@
       <p id="rt6">
         Emergency stop is triggered by connector J1, once triggered controller needs to be reset to disable.
       </p>
+      <p id="rt7">
+        External SOC/Voltage Deviation only apply to Inter Controller Communication (when ControllerNet>1). These two 
+        special rules will only be triggered if one or more of the standard rules are triggered AND present a matching 
+        relay combination to that specified for the special rules. Therefore, set the relay states for these two rules 
+        to match any other rule for which the battery pack should be Isolated.
+      </p>
     </div>
     <div class="region">
       <form id="rulesForm" method="POST" action="/post/saverules" autocomplete="off">
@@ -927,6 +933,24 @@
                 <td>
                   <input type="number" min="0" max="1440" step="1" name="rule15hyst" id="rule15hyst" required=""
                     class="rule" />
+                </td>
+                <td class="relayset"></td>
+              </tr>
+              <tr>
+                <td><label for="rule16value">External SOC Devation (.1%/)</label></td>
+                <td style="text-align: center;"> <em>(explanation above)</em> </td>
+                <td>
+                  <input type="number" min="0" max="50" step="0.1" name="rule16value" id="rule16value" required=""
+                  class="rule" />
+                </td>
+                <td class="relayset"></td>
+              </tr>
+              <tr>
+                <td><label for="rule17value">External Voltage Devation (mV)</label></td>
+                <td style="text-align: center;"> <em>(explanation above)</em> </td>
+                <td>
+                  <input type="number" min="1" max="5000" step="1" name="rule17value" id="rule17value" required=""
+                  class="rule" />
                 </td>
                 <td class="relayset"></td>
               </tr>
@@ -1779,9 +1803,16 @@
     </div>
 
     <div class="region wide">
-      <h2>Intra Controller CAN Settings</h2>
-      <p id="b16">
-        DIYBMS can communicate with up to 8 total controllers for the purpose of communicating aggregated data to an inverter.
+      <h2>Inter Controller CAN Settings</h2>
+      <p id="ican1">
+        DIYBMS can communicate with up to 8 total controllers (parallel connected batteries) for the purpose of communicating aggregated data to an inverter.
+      </p>
+      <p id="ican2">       
+        WARNING!! IF SELECTING HIGH AVAILABILITY MODE! In the event that a controller experiences an error or loses CAN comms, uninterrupted operation
+        of the CANBUS connected charger/inverter will continue (control will be via remaining online controllers). Therefore Charge/Discharge will continue
+        on the system and thus each controller battery MUST be protected by an individual isolation mechanism (contactor). Be sure to also map both 
+        External SOC Devation & External Voltage Deviation in Rules above. Automatic reconnect will only happen once SOC & Voltage of the disconnected controller
+        match the aggregate of the online controllers.
       </p>
       
       <form id="ControllersForm" method="POST" action="/post/saveCAN" autocomplete="off">

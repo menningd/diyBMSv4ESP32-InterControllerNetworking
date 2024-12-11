@@ -9,7 +9,6 @@ static constexpr const char* const TAG = "diybms-victron";
 
 #include "victron_canbus.h"
 
-
 //just send the hostname of the master controller
 
 void victron_message_370_371_35e()
@@ -60,12 +59,8 @@ void victron_message_35f()
 {
     CANframe candata;
     memset(&candata.data, 0, TWAI_FRAME_MAX_DLC);
-
     candata.dlc = 6;
     candata.identifier = 0x35f;
-
-
-
 
     //if no networked controllers than just copy over the local data
     if (mysettings.controllerNet == 1)
@@ -86,7 +81,7 @@ void victron_message_35f()
         uint8_t mismatches = 0;
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))  //check bitmsgs timestamp so we only include online controllers
+            if (CAN.controller_heartbeat(i))  //only include online controllers
             {
             mismatches = mismatches + memcmp((uint16_t*)&CAN.data[5][i][2], (uint16_t*)&CAN.data[5][i + 1][2], sizeof(uint16_t));
             }
@@ -94,11 +89,11 @@ void victron_message_35f()
 
         if (mismatches != 0)
         {
-            // should we raise an alarm here and add to BIT MSGS??
+            // should we raise an alarm here and add to DIYBMS_MSGS??
             // firmware_version_mismatch = true;
 
-            // if firmware versions don't match just display 1's or something...
-            memset(&candata.data[2], 1, sizeof(uint16_t));
+            // if firmware versions don't match just display 0 or something...
+            memset(&candata.data[2], 0, sizeof(uint16_t));
         }
 
         else
@@ -112,7 +107,7 @@ void victron_message_35f()
         uint16_t Total_Weighted_Ah = 0;
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))  //check bitmsgs timestamp so we only include online controllers
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  // only include online, unisolated controllers
             {
             Total_Weighted_Ah = Total_Weighted_Ah + (*(uint16_t*)&CAN.data[4][i][0]) * (*(uint16_t*)&CAN.data[5][i][4]);  //SOC x Online capacity
             }
@@ -231,7 +226,7 @@ void victron_message_373_374_375_376_377()
 
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))  //check bitmsgs timestamp so we only include online controllers
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  //only include online unisolated controllers
             {
                 // find minimums
                 if ((*(uint16_t*)&CAN.data[8][i][0] <= min_cell_v))  
@@ -368,8 +363,8 @@ void  victron_message_351()
         
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            //only include online controllers
-            if (CAN.controller_heartbeat(i))  
+            //// only use values from online controllers that have not Isolated themselves
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  
             {
                 // use minimum
                 if ((*(uint16_t*)&CAN.data[0][i][0] < chargevoltagelimit))
@@ -435,12 +430,12 @@ void victron_message_355()
 
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1)) // only use values from online controllers that have not Isolated themselves
             {
             Total_Ah = Total_Ah + *(uint16_t*)&CAN.data[5][i][4];
             Total_Weighted_Ah = Total_Weighted_Ah + (*(uint16_t*)&CAN.data[4][i][0]) * (*(uint16_t*)&CAN.data[5][i][4]);  //SOC x Online capacity
 
-            // use minimum
+            // use minimum for SOH
             if (*(uint16_t*)&CAN.data[4][i][2] < SOH)
             {
                 SOH = *(uint16_t*)&CAN.data[4][i][2];
@@ -452,6 +447,9 @@ void victron_message_355()
         if (Total_Ah != 0)  //avoid divide by zero (we won't have useable values during CAN initialization)
         {
             Weighted_SOC = Total_Weighted_Ah / Total_Ah;
+            
+            // store this value for use in rules
+            CAN.AggregateSOC = Weighted_SOC;
         }
 
         memcpy(&candata.data[0], &Weighted_SOC, sizeof(Weighted_SOC));
@@ -487,7 +485,7 @@ void victron_message_356()
 
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))  // only use values from online controllers
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  // only use values from online controllers that have not Isolated themselves (DIYBMS_MSGS frame, byte 2)
             {
                 voltage = voltage + *(int16_t*)&CAN.data[6][i][0];
                 current = current + *(int16_t*)&CAN.data[6][i][2];
@@ -499,9 +497,9 @@ void victron_message_356()
         temperature = temperature / CAN.online_controller_count;
 
 
-    memcpy(&candata.data[0], &voltage, sizeof(voltage));
-    memcpy(&candata.data[2], &current, sizeof(current));
-    memcpy(&candata.data[4], &temperature, sizeof(temperature));
+        memcpy(&candata.data[0], &voltage, sizeof(voltage));
+        memcpy(&candata.data[2], &current, sizeof(current));
+        memcpy(&candata.data[4], &temperature, sizeof(temperature));
     }
             // send to tx routine , block 50ms 
             if (xQueueSendToBack(CANtx_q_handle, &candata, pdMS_TO_TICKS(50)) != pdPASS)
@@ -536,7 +534,7 @@ void victron_message_372()
 
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))  // only use 0 values from online controllers
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  // only use 0 values from online controllers that have not Isolated themselves
             {
             online_count = online_count + *(uint16_t*)&CAN.data[3][i][0];
             offline_count = offline_count + *(uint16_t*)&CAN.data[3][i][6];
@@ -568,7 +566,7 @@ void victron_message_35a()
 
     memset(&candata.data, 0, sizeof(candata.data));
 
-        if (mysettings.controllerNet == 1)
+    if (mysettings.controllerNet == 1)
     {
         memcpy(&candata.data[0], &CAN.data[3][mysettings.controllerID][0], candata.dlc);
     }
@@ -610,7 +608,7 @@ void victron_message_35a()
 
                 for (int8_t k = 0; k < MAX_NUM_CONTROLLERS; k++)    // loop through the controllers 
                 {
-                    if (CAN.controller_heartbeat(k))  // only use online controllers
+                    if (CAN.controller_heartbeat(k) && (CAN.data[2][k][2] == 1))  // only use online controllers that have not Isolated themselves
                     {
                     byte = CAN.data[1][k][i];     //set "byte" equal to the byte found in k controller
                         
@@ -685,7 +683,7 @@ void victron_message_379()
     uint16_t Online_Ah = 0;
     for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
     {
-        if (CAN.controller_heartbeat(i))  //check bitmsgs timestamp so we only include online controllers
+        if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  //only include online controllers that have not Isolated themselves
         {
         Online_Ah = Online_Ah + *(uint16_t*)&CAN.data[5][i][4];
         }

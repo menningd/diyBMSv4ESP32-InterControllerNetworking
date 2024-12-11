@@ -14,7 +14,9 @@ const INTERNALRULENUMBER = {
     BankUnderVoltage: 12,
     BankRange: 13,
     Timer2: 14,
-    Timer1: 15
+    Timer1: 15,
+    Reconnect_SOC: 16,
+    Reconnect_Voltage: 17
 }
 Object.freeze(INTERNALRULENUMBER);
 

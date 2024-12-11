@@ -4,11 +4,12 @@
 #pragma once
 
 #include "defines.h"
+#include "ControllerCAN.h"
 
 // Needs to match the ordering on the HTML screen
 // You also need to update "RuleTextDescription" (Rules.cpp)
 // Define a max constant for the highest value (change if you add more rules)
-#define MAXIMUM_RuleNumber 15
+#define MAXIMUM_RuleNumber 17
 enum Rule : uint8_t
 {
     EmergencyStop = 0,
@@ -26,7 +27,9 @@ enum Rule : uint8_t
     BankUnderVoltage = 12,
     BankRange = 13,
     Timer2 = 14,
-    Timer1 = 15
+    Timer1 = 15,
+    ReconnectSOC = 16,
+    ReconnectVoltage = 17
 };
 
 // Define a max constant for the highest value (change if you add more warnings)
@@ -242,7 +245,6 @@ public:
 
     bool IsChargeAllowed(const diybms_eeprom_settings *mysettings);
     bool IsDischargeAllowed(const diybms_eeprom_settings *mysettings);
-    bool NetworkedControllerRules(const diybms_eeprom_settings *mysettings, TimerHandle_t *error_debounce_timer);
     void CalculateDynamicChargeVoltage(const diybms_eeprom_settings *mysettings, const CellModuleInfo *cellarray);
     void CalculateDynamicChargeCurrent(const diybms_eeprom_settings *mysettings);
     uint16_t DynamicChargeVoltage() const;

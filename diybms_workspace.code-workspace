@@ -42,7 +42,8 @@
 			"istream": "cpp",
 			"system_error": "cpp",
 			"string_view": "cpp",
-			"cmath": "cpp"
+			"cmath": "cpp",
+			"typeinfo": "cpp"
 		}
 	}
 }

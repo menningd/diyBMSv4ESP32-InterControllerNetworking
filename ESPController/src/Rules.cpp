@@ -20,7 +20,9 @@ const std::array<std::string, 1 + MAXIMUM_RuleNumber> Rules::RuleTextDescription
     "BankUnderVoltage",
     "BankRange",
     "Timer2",
-    "Timer1"};
+    "Timer1",
+    "ReconnectSOC",
+    "ReconnectVoltage"};
 
 const std::array<std::string, 1 + MAXIMUM_InternalWarningCode> Rules::InternalWarningCodeDescription =
     {
@@ -226,6 +228,17 @@ void Rules::RunRules(
     setRuleStatus(Rule::Timer1, (mins >= value[Rule::Timer1] && mins <= hysteresisvalue[Rule::Timer1]));
     setRuleStatus(Rule::Timer2, (mins >= value[Rule::Timer2] && mins <= hysteresisvalue[Rule::Timer2]));
 
+    // SOC & Voltage Reconnect
+    if (ControllerCAN::SOC_Permit_Reconnect())
+    {
+        setRuleStatus(Rule::ReconnectSOC, false);
+    }
+    if (ControllerCAN::Voltage_Permit_Reconnect())
+    {
+        setRuleStatus(Rule::ReconnectVoltage, false);
+    }
+
+
     if (currentMonitor->validReadings)
     {
         // Currents can be both positive and negative (depending on current flow, we ABS that to get an always POSITIVE number)
@@ -411,41 +424,6 @@ void Rules::RunRules(
         if (v == true)
             active_rule_count++;
     }
-}
-
-bool Rules::NetworkedControllerRules(const diybms_eeprom_settings *mysettings, TimerHandle_t *error_debounce_timer)
-{
-    ESP_LOGD(TAG,"networked controller call rules function");
-    if (moduleHasExternalTempSensor == false)
-         if( !xTimerIsTimerActive( error_debounce_timer ))
-         {
-            xTimerStart(error_debounce_timer, pdMS_TO_TICKS(5));
-            ESP_LOGD(TAG,"disconnect timer started");
-         }
-        return true;
-
-    if (invalidModuleCount > 0)
-         if( !xTimerIsTimerActive( error_debounce_timer ))
-         {
-            xTimerStart(error_debounce_timer, pdMS_TO_TICKS(5));
-            ESP_LOGD(TAG,"disconnect timer started");
-         }
-        return true;
-
-    // Any errors, stop charge
-    if (numberOfActiveErrors > 0)
-         if( !xTimerIsTimerActive( error_debounce_timer ))
-         {
-            xTimerStart(error_debounce_timer, pdMS_TO_TICKS(5));
-            ESP_LOGD(TAG,"disconnect timer started");
-         }
-        return true;
-
-    // Clear the Timer if everything is good
-    xTimerStop(error_debounce_timer, pdMS_TO_TICKS(10));
-    ESP_LOGD(TAG,"disconnect timer stopped");
-
-    return false;
 }
 
 bool Rules::SharedChargingDischargingRules(const diybms_eeprom_settings *mysettings)

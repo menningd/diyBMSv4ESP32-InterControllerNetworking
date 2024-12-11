@@ -55,8 +55,7 @@ void  pylon_message_351()
 
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            //only include online controllers
-            if (CAN.controller_heartbeat(i)) 
+             if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  //only include online, Unisolated controllers
             {
                 if ((*(uint16_t*)&CAN.data[0][i][0] <= chargevoltagelimit))  // find minimum
                 {
@@ -120,7 +119,7 @@ void pylon_message_355()
         
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  //only include online, Unisolated controllers
             {
             Total_Ah = Total_Ah + *(uint16_t*)&CAN.data[5][i][4];     //online capacity
             Total_Weighted_Ah = Total_Weighted_Ah + (*(uint16_t*)&CAN.data[4][i][0]) * (*(uint16_t*)&CAN.data[5][i][4]);  //SOC x Online capacity
@@ -143,8 +142,6 @@ void pylon_message_355()
 
     }
        
-        
-            ESP_LOGI(TAG, "SOC sent to inverter = %d", Weighted_SOC);  //debug purposes only
             // send to tx routine , block 50ms 
             if (xQueueSendToBack(CANtx_q_handle, &candata, pdMS_TO_TICKS(50)) != pdPASS)
             {
@@ -222,21 +219,23 @@ uint8_t alarm_align(uint8_t q, uint8_t s, uint8_t bitsource, uint8_t bitdest)
     // Set inverter to use "Pylontech US3000C 3.5kWh" in its settings (these are 74Ah each)
     uint16_t totalnominalbatcap = 0;
     for (uint8_t i=0; i<MAX_NUM_CONTROLLERS; i++)
-    {
-    totalnominalbatcap = totalnominalbatcap + CAN.data[5][i][4];
-    }
-    candata.data[4] = max((uint8_t)1, (uint8_t)round(totalnominalbatcap / 74.0));
-    candata.data[5] = 0x50;
-    candata.data[6] = 0x4e;
-
-    }
+        {
+            if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  //only include online, Unisolated controllers
+            {
+                totalnominalbatcap = totalnominalbatcap + CAN.data[5][i][4];
+            }
+        }
+        
+            candata.data[4] = max((uint8_t)1, (uint8_t)round(totalnominalbatcap / 74.0));
+            candata.data[5] = 0x50;
+            candata.data[6] = 0x4e;
             // send to tx routine , block 50ms 
             if (xQueueSendToBack(CANtx_q_handle, &candata, pdMS_TO_TICKS(50)) != pdPASS)
             {
                 ESP_LOGE(TAG, "Failed to Q 0x%x (queue full)",candata.identifier);
             }
+    }
 }
-
 // 0x35C – C0 00 – Battery charge request flags
 void pylon_message_35c()
 {
@@ -250,7 +249,7 @@ void pylon_message_35c()
 
     for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
     {
-        if (CAN.data[2][i][2] == 0)  // don't factor in charge request flags from controllers operating under NetworkedControllerRules since it will prevent charging other controllers
+       if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  // only include online, unisolated controllers or they will prevent charging other controllers
         {
             byte0 = byte0 | CAN.data[2][i][1];  //byte 1 of bitmsgs is the charge/discharge request flag
         }
@@ -310,7 +309,7 @@ void pylon_message_356()
 
         for (int8_t i = 0; i < MAX_NUM_CONTROLLERS; i++)
         {
-            if (CAN.controller_heartbeat(i))  // only use values from online controllers
+             if (CAN.controller_heartbeat(i) && (CAN.data[2][i][2] == 1))  //only include online, Unisolated controllers
             {
                 voltage = voltage + *(int16_t*)&CAN.data[6][i][0];
                 current = current + *(int16_t*)&CAN.data[6][i][2];

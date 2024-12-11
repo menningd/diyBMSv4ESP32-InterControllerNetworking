@@ -120,7 +120,7 @@ enum CurrentMonitorDevice : uint8_t
 
 // Number of rules as defined in Rules.h (enum Rule)
 // This value is 1 + MAXIMUM_RuleNumber
-#define RELAY_RULES 16
+#define RELAY_RULES 18
 
 // Number of relays on board (4)
 #define RELAY_TOTAL 4
